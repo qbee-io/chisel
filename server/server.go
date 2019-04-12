@@ -1,7 +1,13 @@
 package chserver
 
 import (
+	"bytes"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -20,27 +26,31 @@ import (
 
 // Config is the configuration for the chisel service
 type Config struct {
-	KeySeed  string
-	AuthFile string
-	Auth     string
-	Proxy    string
-	Socks5   bool
-	Reverse  bool
+	KeySeed         string
+	AuthFile        string
+	AuthURLTemplate string // eg https://da.server.org/{username}/{password}/{host}
+	AuthURLCaCert   string // eg.
+	Auth            string
+	Proxy           string
+	Socks5          bool
+	Reverse         bool
 }
 
 // Server respresent a chisel service
 type Server struct {
 	*chshare.Logger
-	connStats    chshare.ConnStats
-	fingerprint  string
-	httpServer   *chshare.HTTPServer
-	reverseProxy *httputil.ReverseProxy
-	sessCount    int32
-	sessions     *chshare.Users
-	socksServer  *socks5.Server
-	sshConfig    *ssh.ServerConfig
-	users        *chshare.UserIndex
-	reverseOk    bool
+	connStats       chshare.ConnStats
+	fingerprint     string
+	httpServer      *chshare.HTTPServer
+	reverseProxy    *httputil.ReverseProxy
+	sessCount       int32
+	sessions        *chshare.Users
+	socksServer     *socks5.Server
+	sshConfig       *ssh.ServerConfig
+	users           *chshare.UserIndex
+	reverseOk       bool
+	authURLTemplate string
+	authURLClient   *http.Client
 }
 
 var upgrader = websocket.Upgrader{
@@ -85,6 +95,37 @@ func NewServer(config *Config) (*Server, error) {
 		ServerVersion:    "SSH-" + chshare.ProtocolVersion + "-server",
 		PasswordCallback: s.authUser,
 	}
+
+	if config.AuthURLTemplate != "" {
+
+		s.authURLClient = &http.Client{}
+		s.authURLTemplate = config.AuthURLTemplate
+
+		rootCAs, _ := x509.SystemCertPool()
+		if rootCAs == nil {
+			rootCAs = x509.NewCertPool()
+		}
+
+		if config.AuthURLCaCert != "" {
+			certs, err := ioutil.ReadFile(config.AuthURLCaCert)
+			if err != nil {
+				log.Fatalf("Failed to append %q to RootCAs: %v", config.AuthURLCaCert, err)
+			}
+
+			// Append our cert to the system pool
+			if ok := rootCAs.AppendCertsFromPEM(certs); !ok {
+				log.Println("No certs appended, using system certs only")
+			}
+		}
+		config := &tls.Config{
+			RootCAs: rootCAs,
+		}
+		tr := &http.Transport{TLSClientConfig: config}
+		s.authURLClient.Transport = tr
+		s.sshConfig.PasswordCallback = s.authUserURL
+		fmt.Println("hello")
+	}
+
 	s.sshConfig.AddHostKey(private)
 	//setup reverse proxy
 	if config.Proxy != "" {
@@ -166,6 +207,7 @@ func (s *Server) authUser(c ssh.ConnMetadata, password []byte) (*ssh.Permissions
 	if s.users.Len() == 0 {
 		return nil, nil
 	}
+
 	// check the user exists and has matching password
 	n := c.User()
 	user, found := s.users.Get(n)
@@ -177,4 +219,78 @@ func (s *Server) authUser(c ssh.ConnMetadata, password []byte) (*ssh.Permissions
 	// @note: this should probably have a lock on it given the map isn't thread-safe??
 	s.sessions.Set(string(c.SessionID()), user)
 	return nil, nil
+}
+
+// authUserURL is authenticating users using a token service
+type authUserData struct {
+	Username string
+	Password string
+}
+
+func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	authData := authUserData{
+		Username: c.User(),
+		Password: string(password),
+	}
+
+	tmpl, err := template.New("test").Parse(s.authURLTemplate)
+
+	if err != nil {
+		s.Debugf(err.Error())
+		return nil, errors.New("Invalid authentication for username: %s")
+	}
+
+	var url bytes.Buffer
+	err = tmpl.Execute(&url, authData)
+	if err != nil {
+		s.Debugf(err.Error())
+		return nil, errors.New("Invalid authentication for username: %s")
+	}
+
+	resp, err := s.authURLClient.Get(url.String())
+
+	if err != nil {
+		s.Debugf(err.Error())
+		return nil, errors.New("Invalid authentication for username: %s")
+	}
+
+	if err != nil {
+		s.Debugf(err.Error())
+		return nil, errors.New("Invalid authentication for username: %s")
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var v map[string]interface{}
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			s.Debugf(err.Error())
+			return nil, errors.New("Invalid authentication for username: %s")
+		}
+
+		err = json.Unmarshal(body, &v)
+		if err != nil {
+			s.Debugf(err.Error())
+			return nil, errors.New("Invalid authentication for username: %s")
+		}
+
+		regexes := []*regexp.Regexp{}
+		for _, addr := range v["addresses"].([]interface{}) {
+			regex := fmt.Sprintf("^%s:\\d+$", regexp.QuoteMeta(addr.(string)))
+			hostRegex, err := regexp.Compile(regex)
+			if err != nil {
+				s.Debugf(err.Error())
+				return nil, errors.New("Invalid authentication for username: %s")
+			}
+			regexes = append(regexes, hostRegex)
+		}
+
+		user := &chshare.User{
+			Name:  authData.Username,
+			Pass:  authData.Password,
+			Addrs: regexes,
+		}
+		s.sessions.Set(string(c.SessionID()), user)
+		return nil, nil
+	}
+	return nil, errors.New("Invalid authentication for username: %s")
 }
