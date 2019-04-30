@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 
 	socks5 "github.com/armon/go-socks5"
 	"github.com/gorilla/websocket"
@@ -26,14 +27,15 @@ import (
 
 // Config is the configuration for the chisel service
 type Config struct {
-	KeySeed         string
-	AuthFile        string
-	AuthURLTemplate string // eg https://da.server.org/{username}/{password}/{host}
-	AuthURLCaCert   string // eg.
-	Auth            string
-	Proxy           string
-	Socks5          bool
-	Reverse         bool
+	KeySeed                      string
+	AuthFile                     string
+	AuthURLTemplate              string // eg https://da.server.org/{username}/{password}/{host}
+	AuthURLCaCert                string // eg. path to cacert
+	AuthURLAssumeUniqueUsernames bool   // assume unique usernames in AuthFile when checking acl
+	Auth                         string
+	Proxy                        string
+	Socks5                       bool
+	Reverse                      bool
 }
 
 // Server respresent a chisel service
@@ -49,6 +51,7 @@ type Server struct {
 	sshConfig       *ssh.ServerConfig
 	users           *chshare.UserIndex
 	reverseOk       bool
+	config          *Config
 	authURLTemplate string
 	authURLClient   *http.Client
 }
@@ -117,12 +120,13 @@ func NewServer(config *Config) (*Server, error) {
 				log.Println("No certs appended, using system certs only")
 			}
 		}
-		config := &tls.Config{
+		tlsConfig := &tls.Config{
 			RootCAs: rootCAs,
 		}
-		tr := &http.Transport{TLSClientConfig: config}
+		tr := &http.Transport{TLSClientConfig: tlsConfig}
 		s.authURLClient.Transport = tr
 		s.sshConfig.PasswordCallback = s.authUserURL
+		s.config = config
 		fmt.Println("hello")
 	}
 
@@ -228,6 +232,7 @@ type authUserData struct {
 }
 
 func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+
 	authData := authUserData{
 		Username: c.User(),
 		Password: string(password),
@@ -261,6 +266,7 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		var v map[string]interface{}
+
 		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			s.Debugf(err.Error())
@@ -273,21 +279,23 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 			return nil, errors.New("Invalid authentication for username: %s")
 		}
 
-		regexes := []*regexp.Regexp{}
-		for _, addr := range v["addresses"].([]interface{}) {
-			regex := fmt.Sprintf("^%s:\\d+$", regexp.QuoteMeta(addr.(string)))
-			hostRegex, err := regexp.Compile(regex)
-			if err != nil {
-				s.Debugf(err.Error())
-				return nil, errors.New("Invalid authentication for username: %s")
-			}
-			regexes = append(regexes, hostRegex)
+		userNameACL := authData.Username
+		if s.config.AuthURLAssumeUniqueUsernames {
+			userNameParts := strings.Split(authData.Username, "@")
+			userNameACL = userNameParts[0]
 		}
+
+		userACL, found := s.users.Get(userNameACL)
+		if !found {
+			s.Debugf("Username %s not found", userNameACL)
+			return nil, errors.New("Invalid authentication for username: %s")
+		}
+		fmt.Printf("%+v\n", userACL)
 
 		user := &chshare.User{
 			Name:  authData.Username,
 			Pass:  authData.Password,
-			Addrs: regexes,
+			Addrs: userACL.Addrs,
 		}
 		s.sessions.Set(string(c.SessionID()), user)
 		return nil, nil

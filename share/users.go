@@ -125,6 +125,13 @@ func (u *UserIndex) loadUserIndex() error {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return errors.New("Invalid JSON: " + err.Error())
 	}
+
+	/*
+		Empty previous list, or else we will keep adding and it won't be a correct
+		representation of the current file
+	*/
+	u.Users = NewUsers()
+
 	for auth, remotes := range raw {
 		user := &User{}
 		user.Name, user.Pass = ParseAuth(auth)

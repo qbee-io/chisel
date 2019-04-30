@@ -148,6 +148,7 @@ func server(args []string) {
 	verbose := flags.Bool("v", false, "")
 	authurltemplate := flags.String("authurltemplate", "", "")
 	authurlcacert := flags.String("authurlcacert", "", "")
+	authurlassumeuniqueusernames := flags.Bool("authurlassumeuniqueusernames", false, "")
 
 	flags.Usage = func() {
 		fmt.Print(serverHelp)
@@ -174,14 +175,15 @@ func server(args []string) {
 		*key = os.Getenv("CHISEL_KEY")
 	}
 	s, err := chserver.NewServer(&chserver.Config{
-		KeySeed:         *key,
-		AuthFile:        *authfile,
-		Auth:            *auth,
-		Proxy:           *proxy,
-		Socks5:          *socks5,
-		Reverse:         *reverse,
-		AuthURLTemplate: *authurltemplate,
-		AuthURLCaCert:   *authurlcacert,
+		KeySeed:                      *key,
+		AuthFile:                     *authfile,
+		Auth:                         *auth,
+		Proxy:                        *proxy,
+		Socks5:                       *socks5,
+		Reverse:                      *reverse,
+		AuthURLTemplate:              *authurltemplate,
+		AuthURLCaCert:                *authurlcacert,
+		AuthURLAssumeUniqueUsernames: *authurlassumeuniqueusernames,
 	})
 	if err != nil {
 		log.Fatal(err)
