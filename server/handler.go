@@ -19,8 +19,8 @@ func (s *Server) handleClientHandler(w http.ResponseWriter, r *http.Request) {
 	//websockets upgrade AND has chisel prefix
 	upgrade := strings.ToLower(r.Header.Get("Upgrade"))
 	protocol := r.Header.Get("Sec-WebSocket-Protocol")
-	if upgrade == "websocket" && strings.HasPrefix(protocol, "chisel-") {
-		if protocol == chshare.ProtocolVersion {
+	if upgrade == "websocket" && (strings.HasPrefix(protocol, "chisel-") || strings.HasPrefix(protocol, "tcpforwarder-")) {
+		if protocol == chshare.ProtocolVersion || protocol == chshare.ProtocolVersionAlt {
 			s.handleWebsocket(w, r)
 			return
 		}
