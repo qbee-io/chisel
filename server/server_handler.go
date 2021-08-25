@@ -20,7 +20,7 @@ func (s *Server) handleClientHandler(w http.ResponseWriter, r *http.Request) {
 	upgrade := strings.ToLower(r.Header.Get("Upgrade"))
 	protocol := r.Header.Get("Sec-WebSocket-Protocol")
 	if upgrade == "websocket" && (strings.HasPrefix(protocol, "chisel-") || strings.HasPrefix(protocol, "tcpforwarder-") {
-		if protocol == chshare.ProtocolVersion || protocol == chshare.ProtocolAltVersion {
+		if protocol == chshare.ProtocolVersion || protocol == chshare.ProtocolVersionAlt {
 			s.handleWebsocket(w, r)
 			return
 		}
