@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -32,7 +31,7 @@ import (
 type Config struct {
 	KeySeed                      string
 	AuthFile                     string
-	AuthURLTemplate              string // eg https://da.server.org/{username}/{password}/{host}
+	AuthURL                      string // eg https://da.server.org/path/to/post
 	AuthURLCaCert                string // eg. path to cacert
 	AuthURLAssumeUniqueUsernames bool   // assume unique usernames in AuthFile when checking acl
 	Auth                         string
@@ -46,16 +45,16 @@ type Config struct {
 // Server respresent a chisel service
 type Server struct {
 	*cio.Logger
-	config          *Config
-	fingerprint     string
-	httpServer      *cnet.HTTPServer
-	reverseProxy    *httputil.ReverseProxy
-	sessCount       int32
-	sessions        *settings.Users
-	sshConfig       *ssh.ServerConfig
-	users           *settings.UserIndex
-	authURLTemplate string
-	authURLClient   *http.Client
+	config        *Config
+	fingerprint   string
+	httpServer    *cnet.HTTPServer
+	reverseProxy  *httputil.ReverseProxy
+	sessCount     int32
+	sessions      *settings.Users
+	sshConfig     *ssh.ServerConfig
+	users         *settings.UserIndex
+	authURL       string
+	authURLClient *http.Client
 }
 
 var upgrader = websocket.Upgrader{
@@ -105,10 +104,10 @@ func NewServer(c *Config) (*Server, error) {
 	}
 	server.sshConfig.AddHostKey(private)
 
-	if c.AuthURLTemplate != "" {
+	if c.AuthURL != "" {
 
 		server.authURLClient = &http.Client{}
-		server.authURLTemplate = c.AuthURLTemplate
+		server.authURL = c.AuthURL
 
 		rootCAs, _ := x509.SystemCertPool()
 		if rootCAs == nil {
@@ -133,7 +132,7 @@ func NewServer(c *Config) (*Server, error) {
 		server.authURLClient.Transport = tr
 		server.sshConfig.PasswordCallback = server.authUserURL
 		server.config = c
-		fmt.Println("hello")
+		//fmt.Println("hello")
 	}
 	//setup reverse proxy
 	if c.Proxy != "" {
@@ -264,8 +263,8 @@ func (s *Server) ResetUsers(users []*settings.User) {
 
 // authUserURL is authenticating users using a token service
 type authUserData struct {
-	Username string
-	Password string
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
@@ -275,21 +274,14 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		Password: string(password),
 	}
 
-	tmpl, err := template.New("test").Parse(s.authURLTemplate)
+	authDataJSON, err := json.Marshal(authData)
 
 	if err != nil {
 		s.Debugf(err.Error())
 		return nil, errors.New("Invalid authentication for username: %s")
 	}
 
-	var url bytes.Buffer
-	err = tmpl.Execute(&url, authData)
-	if err != nil {
-		s.Debugf(err.Error())
-		return nil, errors.New("Invalid authentication for username: %s")
-	}
-
-	resp, err := s.authURLClient.Get(url.String())
+	resp, err := s.authURLClient.Post(s.authURL, "application/json", bytes.NewBuffer(authDataJSON))
 
 	if err != nil {
 		s.Debugf(err.Error())
