@@ -288,11 +288,6 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 		return nil, errors.New("Invalid authentication for username: %s")
 	}
 
-	if err != nil {
-		s.Debugf(err.Error())
-		return nil, errors.New("Invalid authentication for username: %s")
-	}
-
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		var v map[string]interface{}
 
@@ -316,8 +311,13 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 
 		userACL, found := s.users.Get(userNameACL)
 		if !found {
-			s.Debugf("Username %s not found", userNameACL)
-			return nil, errors.New("Invalid authentication for username: %s")
+			s.Infof("Username %s not found, attempting reload of index", userNameACL)
+			_ = s.users.LoadUserIndex()
+			userACL, found = s.users.Get(userNameACL)
+			if !found {
+				s.Debugf("Username %s not found", userNameACL)
+				return nil, errors.New("Invalid authentication for username: %s")
+			}
 		}
 		fmt.Printf("%+v\n", userACL)
 

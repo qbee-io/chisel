@@ -157,3 +157,8 @@ func (u *UserIndex) loadUserIndex() error {
 	u.Reset(users)
 	return nil
 }
+
+// public method in order to try reload of user definition upon failed auth
+func (u *UserIndex) LoadUserIndex() error {
+	return u.loadUserIndex()
+}
