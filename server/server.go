@@ -310,6 +310,10 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 
 		userACL, found := s.users.Get(userNameACL)
 		if !found {
+			/*
+				Something is wrong with how the inotify picks up changes to the acl, reloading
+				once when username is not found
+			*/
 			s.Infof("Username %s not found, attempting reload of index", userNameACL)
 			_ = s.users.LoadUserIndex()
 			userACL, found = s.users.Get(userNameACL)
