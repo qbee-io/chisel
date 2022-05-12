@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -319,7 +318,7 @@ func (s *Server) authUserURL(c ssh.ConnMetadata, password []byte) (*ssh.Permissi
 				return nil, errors.New("Invalid authentication for username: %s")
 			}
 		}
-		fmt.Printf("%+v\n", userACL)
+		//fmt.Printf("%+v\n", userACL)
 
 		user := &chshare.User{
 			Name:  authData.Username,
